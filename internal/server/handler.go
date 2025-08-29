@@ -5,7 +5,7 @@ import (
 	"log"
 
 	"database/sql"
-	"go-server/internal/auth"
+	"go_server/internal/auth"
 	"github.com/coder/websocket"
 )
 
