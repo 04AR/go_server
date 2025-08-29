@@ -10,9 +10,9 @@ import (
 	"net/http"
 	"time"
 
-	"go-server/internal/server"
-	"go-server/internal/db"
-	"go-server/internal/auth"
+	"go_server/internal/server"
+	"go_server/internal/db"
+	"go_server/internal/auth"
 
 	// "github.com/redis/go-redis/v9"
 	"database/sql"
@@ -83,3 +83,4 @@ func main() {
 		log.Fatal("Shutdown:", err)
 	}
 }
+
