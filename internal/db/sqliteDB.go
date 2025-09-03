@@ -2,7 +2,7 @@ package DB
 
 import (
 	"log"
-	
+
 	"database/sql"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -13,14 +13,14 @@ func InitSqlite(db *sql.DB) {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			username TEXT UNIQUE NOT NULL,
 			password_hash TEXT NOT NULL
-		)
+		);
 	`)
 	if err != nil {
 		log.Fatal("Failed to init SQLite:", err)
 	}
 }
 
-func TestData(db *sql.DB){
+func TestDataSqlite(db *sql.DB) {
 	// Insert test user (username: test, password: password)
 	hash, err := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.DefaultCost)
 	if err != nil {
