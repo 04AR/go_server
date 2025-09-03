@@ -4,28 +4,31 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"net/http"
 	"time"
 
-	"go_server/internal/server"
-	"go_server/internal/db"
-	"go_server/internal/auth"
+	"go-server/internal/auth"
+	"go-server/internal/db"
+	"go-server/internal/server"
 
 	// "github.com/redis/go-redis/v9"
 	"database/sql"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
 
 const (
-	dbFile         = "./users.db"
-	wsAddr		   = ":8080"
-	profilerAddr   = ":9090"
-	redisAddr      = ":6379" // Assumes running in Docker Compose network
-	redisPassword  = ""      // No password set
-	jwtSecretKey   = "your-very-secret-key" // CHANGE THIS in production
+	sqlDb         = "./users.db"
+	dsn           = "postgres://username:password@localhost:5432/mydb" // PostgressDB credentials
+	wsAddr        = ":8080"
+	profilerAddr  = ":9090"
+	redisAddr     = ":6379"                // Assumes running in Docker Compose network
+	redisPassword = ""                     // No password set
+	jwtSecretKey  = "your-very-secret-key" // CHANGE THIS in production
 )
 
 func main() {
@@ -35,13 +38,23 @@ func main() {
 	// --- Database Setup ---
 	// Init SQLite
 	log.Println("Initializing SQLite database...") // 1 goroutine
-	db, err := sql.Open("sqlite", dbFile)
+	db, err := sql.Open("sqlite", sqlDb)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer db.Close()
 	DB.InitSqlite(db)
-	DB.TestData(db)
+	DB.TestDataSqlite(db)
+
+	// Init Postgres
+	// log.Println("Initializing Postgress database...")
+	// db, err := sql.Open("pgx", dsn)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// defer db.Close()
+	// DB.InitPG(db)
+	// DB.TestDataPG(db)
 
 	// Init Redis
 	log.Println("Connecting to Redis...")
@@ -83,4 +96,3 @@ func main() {
 		log.Fatal("Shutdown:", err)
 	}
 }
-
