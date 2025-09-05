@@ -158,27 +158,6 @@ func (db *RedisManager) CallScript(ctx context.Context, action string, keys []st
 	}
 }
 
-//
-// Pub/Sub for events
-//
-
-// func (db *RedisManager) SubscribeEvents(ctx context.Context, hub *Hub) {
-// 	pubsub := db.Client.Subscribe(ctx, "events")
-// 	ch := pubsub.Channel()
-
-// 	go func() {
-// 		for {
-// 			select {
-// 			case msg := <-ch:
-// 				// Forward Redis "events" to hub broadcast
-// 				hub.broadcast <- []byte(msg.Payload)
-// 			case <-ctx.Done():
-// 				return
-// 			}
-// 		}
-// 	}()
-// }
-
 func (db *RedisManager) Shutdown(ctx context.Context, wipeData bool) {
 	log.Println("Shutting down Redis...")
 
