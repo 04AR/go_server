@@ -18,21 +18,18 @@ type RedisManager struct {
 	PubSub  *redis.PubSub
 	scripts map[string]string // action -> sha1
 	mu      sync.RWMutex
-	// clients   map[*server.Connection]bool
-	// clientsMu sync.Mutex
 }
 
 func InitRedis(addr string, password string, scriptDir string) (*RedisManager, error) {
-	// client := redis.NewClient(&redis.Options{Addr: addr, Password: password, DB: 0})
-	// if err := client.Ping(context.Background()).Err(); err != nil {
-	// 	log.Fatal("Failed to connect to Redis:", err)
-	// }
-	// pubsub := client.Subscribe(context.Background(), "broadcast")
-
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     addr,
 		Password: password,
 	})
+
+	// Test connection
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		return nil, fmt.Errorf("ping redis: %w", err)
+	}
 
 	db := &RedisManager{
 		Client:  rdb,
@@ -158,5 +155,53 @@ func (db *RedisManager) CallScript(ctx context.Context, action string, keys []st
 		return map[string]interface{}{"result": val}, nil
 	default:
 		return map[string]interface{}{"result": val}, nil
+	}
+}
+
+//
+// Pub/Sub for events
+//
+
+// func (db *RedisManager) SubscribeEvents(ctx context.Context, hub *Hub) {
+// 	pubsub := db.Client.Subscribe(ctx, "events")
+// 	ch := pubsub.Channel()
+
+// 	go func() {
+// 		for {
+// 			select {
+// 			case msg := <-ch:
+// 				// Forward Redis "events" to hub broadcast
+// 				hub.broadcast <- []byte(msg.Payload)
+// 			case <-ctx.Done():
+// 				return
+// 			}
+// 		}
+// 	}()
+// }
+
+func (db *RedisManager) Shutdown(ctx context.Context, wipeData bool) {
+	log.Println("Shutting down Redis...")
+
+	// Unload all Lua scripts
+	if err := db.Client.ScriptFlush(ctx).Err(); err != nil {
+		log.Printf("failed to flush scripts: %v", err)
+	} else {
+		log.Println("All Lua scripts flushed")
+	}
+
+	// Wipe data if requested
+	if wipeData {
+		if err := db.Client.FlushDB(ctx).Err(); err != nil {
+			log.Printf("failed to flush DB: %v", err)
+		} else {
+			log.Println("All Redis data cleared")
+		}
+	}
+
+	// Close client
+	if err := db.Client.Close(); err != nil {
+		log.Printf("failed to close Redis client: %v", err)
+	} else {
+		log.Println("Redis client closed")
 	}
 }
