@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"go-server/internal/auth"
-	"go-server/internal/db"
+	DB "go-server/internal/db"
 	"go-server/internal/server"
 
 	// "github.com/redis/go-redis/v9"
@@ -21,17 +21,18 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const (
-	sqlDb         = "./users.db"
-	dsn           = "postgres://username:password@localhost:5432/mydb" // PostgressDB credentials
-	wsAddr        = ":8080"
-	profilerAddr  = ":9090"
-	redisAddr     = ":6379"                // Assumes running in Docker Compose network
-	redisPassword = ""                     // No password set
-	jwtSecretKey  = "your-very-secret-key" // CHANGE THIS in production
-)
-
 func main() {
+
+	// Load config from env
+	cfg := LoadEnv()
+	sqlDb := cfg.SQLDBPath
+	// dsn := cfg.PostgresDSN
+	wsAddr := cfg.WSAddr
+	profilerAddr := cfg.ProfilerAddr
+	redisAddr := cfg.RedisAddr
+	redisPassword := cfg.RedisPassword
+	redisLuaScript := cfg.RedisLuaScript
+
 	// --- Profiling Setup ---
 	InitProfiler(profilerAddr) // 2 goroutines
 
@@ -58,23 +59,23 @@ func main() {
 
 	// Init Redis
 	log.Println("Connecting to Redis...")
-	redisClient := DB.InitRedis(redisAddr, redisPassword)
-	defer redisClient.Close()
+	rm, err := DB.InitRedis(redisAddr, redisPassword, redisLuaScript)
+	if err != nil {
+		log.Fatal("Failed to connect to Redis:", err)
+	}
+	defer rm.Client.Close()
+	// go rm.Listen(context.Background()) // Start Redis listener
 
 	fmt.Println("Starting server...")
 	// --- HTTP and Websocket Server Setup ---
-	log.Println("WSServer listening on", wsAddr)
-
-	hub := server.NewHub()
-	go hub.Run() // start hub in background  // 1 goroutine
-
 	// Auth routes
 	http.HandleFunc("/register", auth.RegisterHandler(db))
 	http.HandleFunc("/login", auth.LoginHandler(db))
-	http.HandleFunc("/guest", auth.GuestHandler(redisClient))
+	http.HandleFunc("/guest", auth.GuestHandler(rm.Client))
 	// WebSocket route
+	log.Println("WSServer listening on", wsAddr)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		server.ServeWS(hub, w, r, db)
+		server.ServeWS(rm, w, r, db)
 	})
 
 	// Start server
