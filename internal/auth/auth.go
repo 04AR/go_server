@@ -2,19 +2,24 @@ package auth
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
-	"fmt"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jmoiron/sqlx"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
 
-var jwtSecret = []byte("supersecretkey") // Change in production
+var jwtSecret []byte = []byte("your-very-secret-key") // CHANGE THIS in production
+
+func init() {
+
+}
 
 type registerReq struct {
 	Username string `json:"username"`
@@ -26,7 +31,7 @@ type loginReq struct {
 	Password string `json:"password"`
 }
 
-func RegisterHandler(db *sql.DB) http.HandlerFunc {
+func RegisterHandler(db *sqlx.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -74,7 +79,7 @@ func RegisterHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func LoginHandler(db *sql.DB) http.HandlerFunc {
+func LoginHandler(db *sqlx.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -132,7 +137,7 @@ func GuestHandler(redisClient *redis.Client) http.HandlerFunc {
 		guestID = -guestID // Negative IDs for guests
 
 		// Store guest metadata in Redis (expires after 1 hour)
-		guestKey := "guest:" + string(guestID)
+		guestKey := "guest:" + strconv.FormatInt(guestID, 10)
 		err = redisClient.HSet(ctx, guestKey, map[string]interface{}{
 			"created_at": time.Now().Unix(),
 		}).Err()
@@ -144,9 +149,9 @@ func GuestHandler(redisClient *redis.Client) http.HandlerFunc {
 
 		// Generate short-lived JWT (1 hour)
 		claims := jwt.MapClaims{
-			"user_id": guestID,
+			"user_id":  guestID,
 			"is_guest": true,
-			"exp":     time.Now().Add(1 * time.Hour).Unix(),
+			"exp":      time.Now().Add(1 * time.Hour).Unix(),
 		}
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 		signed, err := token.SignedString(jwtSecret)
@@ -159,25 +164,30 @@ func GuestHandler(redisClient *redis.Client) http.HandlerFunc {
 	}
 }
 
-func ValidateJWT(tokenStr string, db *sql.DB) (int, error) {
+func ValidateJWT(tokenStr string, db *sqlx.DB) (int, bool, error) {
 	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 		return jwtSecret, nil
 	})
 	if err != nil || !token.Valid {
-		return 0, err
+		return 0, false, err
 	}
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return 0, jwt.ErrInvalidKey
+		return 0, false, jwt.ErrInvalidKey
 	}
 	userID := int(claims["user_id"].(float64))
+
+	// If guest flag is set in token → no DB check
+	if guest, ok := claims["guest"].(bool); ok && guest {
+		return userID, true, nil
+	}
 
 	// Check if user is in the database (for registered users)
 	var exists bool
 	err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE id = ?)", userID).Scan(&exists)
 	if err != nil || !exists {
-		return 0, fmt.Errorf("registered user not found")
+		return 0, false, fmt.Errorf("registered user not found")
 	}
 
-	return userID, nil
+	return userID, false, nil
 }
