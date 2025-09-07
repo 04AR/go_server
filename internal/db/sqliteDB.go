@@ -1,13 +1,13 @@
-package DB
+package db
 
 import (
 	"log"
 
-	"database/sql"
+	"github.com/jmoiron/sqlx"
 	"golang.org/x/crypto/bcrypt"
 )
 
-func InitSqlite(db *sql.DB) {
+func InitSqlite(db *sqlx.DB) {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -20,7 +20,7 @@ func InitSqlite(db *sql.DB) {
 	}
 }
 
-func TestDataSqlite(db *sql.DB) {
+func TestDataSqlite(db *sqlx.DB) {
 	// Insert test user (username: test, password: password)
 	hash, err := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.DefaultCost)
 	if err != nil {
