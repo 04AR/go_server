@@ -4,27 +4,33 @@ import (
 	"log"
 	"net/http"
 
-	"database/sql"
 	"go-server/internal/auth"
 	"go-server/internal/db"
 
 	"github.com/coder/websocket"
+	"github.com/jmoiron/sqlx"
 )
 
-func ServeWS(rm *db.RedisManager, w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func ServeWS(rm *db.RedisManager, w http.ResponseWriter, r *http.Request, db *sqlx.DB) {
 	// Simple token auth (in real app, use JWT or session)
 	tokenStr := r.URL.Query().Get("token")
 	if tokenStr == "" {
 		http.Error(w, "Missing token", http.StatusUnauthorized)
 		return
 	}
-	// Validate JWT
-	userID, err := auth.ValidateJWT(tokenStr, db)
+
+	// Validate JWT (now returns userID + isGuest flag)
+	userID, isGuest, err := auth.ValidateJWT(tokenStr, db)
 	if err != nil {
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
 	}
-	log.Printf("User %d connected via WebSocket", userID)
+
+	if isGuest {
+		log.Printf("Guest user %d connected via WebSocket", userID)
+	} else {
+		log.Printf("Registered user %d connected via WebSocket", userID)
+	}
 
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
