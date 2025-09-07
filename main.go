@@ -14,34 +14,21 @@ import (
 	DB "go-server/internal/db"
 	"go-server/internal/server"
 
-	// "github.com/redis/go-redis/v9"
-	"database/sql"
-
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
 )
 
 func main() {
-
-	// Load config from env
-	cfg := LoadEnv()
-	sqlDb := cfg.SQLDBPath
-	// dsn := cfg.PostgresDSN
-	wsAddr := cfg.WSAddr
-	profilerAddr := cfg.ProfilerAddr
-	redisAddr := cfg.RedisAddr
-	redisPassword := cfg.RedisPassword
-	redisLuaScript := cfg.RedisLuaScript
-
 	// --- Profiling Setup ---
-	InitProfiler(profilerAddr) // 2 goroutines
+	// InitProfiler(ProfilerAddr) // 2 goroutines
 
 	// --- Database Setup ---
 	// Init SQLite
 	log.Println("Initializing SQLite database...") // 1 goroutine
-	db, err := sql.Open("sqlite", sqlDb)
+	db, err := sqlx.Open("sqlite", SQLDBPath)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Failed to open SQLite database:", err)
 	}
 	defer db.Close()
 	DB.InitSqlite(db)
@@ -49,7 +36,7 @@ func main() {
 
 	// Init Postgres
 	// log.Println("Initializing Postgress database...")
-	// db, err := sql.Open("pgx", dsn)
+	// db, err := sql.Open("pgx", PostgresDSN)
 	// if err != nil {
 	// 	log.Fatal(err)
 	// }
@@ -59,9 +46,9 @@ func main() {
 
 	// Init Redis
 	log.Println("Connecting to Redis...")
-	rm, err := DB.InitRedis(redisAddr, redisPassword, redisLuaScript)
+	rm, err := DB.InitRedis(RedisAddr, RedisPassword, RedisLuaScriptPath)
 	if err != nil {
-		log.Fatal("Failed to connect to Redis:", err)
+		log.Fatal("Error connecting to Redis:", err)
 	}
 	defer rm.Client.Close()
 	// go rm.Listen(context.Background()) // Start Redis listener
@@ -73,13 +60,13 @@ func main() {
 	http.HandleFunc("/login", auth.LoginHandler(db))
 	http.HandleFunc("/guest", auth.GuestHandler(rm.Client))
 	// WebSocket route
-	log.Println("WSServer listening on", wsAddr)
+	log.Println("WSServer listening on", WSAddr)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		server.ServeWS(rm, w, r, db)
 	})
 
 	// Start server
-	srv := &http.Server{Addr: wsAddr}
+	srv := &http.Server{Addr: WSAddr}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
@@ -92,6 +79,7 @@ func main() {
 	<-sig
 	log.Println("Shutting down Server...")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	rm.Shutdown(ctx, true) // Shutdown Redis listeners
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatal("Shutdown:", err)
