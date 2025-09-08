@@ -163,31 +163,48 @@ func GuestHandler(redisClient *redis.Client) http.HandlerFunc {
 		json.NewEncoder(w).Encode(map[string]string{"token": signed})
 	}
 }
-
-func ValidateJWT(tokenStr string, db *sqlx.DB) (int, bool, error) {
+func ValidateJWT(tokenStr string, db *sqlx.DB, redisClient *redis.Client) (int, bool, error) {
 	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+		// Ensure signing method is HMAC
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
 		return jwtSecret, nil
 	})
 	if err != nil || !token.Valid {
 		return 0, false, err
 	}
+
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return 0, false, jwt.ErrInvalidKey
-	}
-	userID := int(claims["user_id"].(float64))
-
-	// If guest flag is set in token → no DB check
-	if guest, ok := claims["guest"].(bool); ok && guest {
-		return userID, true, nil
+		return 0, false, fmt.Errorf("invalid token claims")
 	}
 
-	// Check if user is in the database (for registered users)
-	var exists bool
-	err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE id = ?)", userID).Scan(&exists)
-	if err != nil || !exists {
-		return 0, false, fmt.Errorf("registered user not found")
+	// user_id must always exist
+	userIDFloat, ok := claims["user_id"].(float64)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid user_id in token")
+	}
+	userID := int(userIDFloat)
+
+	// is_guest is optional
+	isGuest, _ := claims["is_guest"].(bool)
+
+	if isGuest {
+		// Check guest in Redis
+		guestKey := "guest:" + strconv.FormatInt(int64(userID), 10)
+		exists, err := redisClient.Exists(context.Background(), guestKey).Result()
+		if err != nil || exists == 0 {
+			return 0, true, fmt.Errorf("guest user not found")
+		}
+	} else {
+		// Check registered user in SQLite
+		var exists bool
+		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE id = ?)", userID).Scan(&exists)
+		if err != nil || !exists {
+			return 0, false, fmt.Errorf("registered user not found")
+		}
 	}
 
-	return userID, false, nil
+	return userID, isGuest, nil
 }
