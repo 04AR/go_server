@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -15,10 +17,15 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var jwtSecret []byte = []byte("your-very-secret-key") // CHANGE THIS in production
+var jwtSecret []byte
 
 func init() {
-
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		secret = "jwt_secret"
+		// log.Fatal("JWT_SECRET environment variable not set")
+	}
+	jwtSecret = []byte(secret)
 }
 
 type registerReq struct {
@@ -112,6 +119,7 @@ func LoginHandler(db *sqlx.DB) http.HandlerFunc {
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 		signed, err := token.SignedString(jwtSecret)
 		if err != nil {
+			log.Printf("ERROR: failed to sign JWT for user %d: %v", id, err)
 			http.Error(w, "Internal error", http.StatusInternalServerError)
 			return
 		}
