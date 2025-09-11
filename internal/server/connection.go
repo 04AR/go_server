@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"time"
 
 	"go-server/internal/db"
 
@@ -29,16 +28,20 @@ type ServerResponse struct {
 }
 
 type Connection struct {
-	rm     *db.RedisManager
-	conn   *websocket.Conn
-	SendCh chan []byte
+	rm      *db.RedisManager
+	conn    *websocket.Conn
+	SendCh  chan []byte
+	UserID  int  // <-- Add this
+	IsGuest bool // <-- Add this
 }
 
-func NewConnection(rm *db.RedisManager, conn *websocket.Conn) *Connection {
+func NewConnection(rm *db.RedisManager, conn *websocket.Conn, userID int, isGuest bool) *Connection {
 	c := &Connection{
-		rm:     rm,
-		conn:   conn,
-		SendCh: make(chan []byte, 16),
+		rm:      rm,
+		conn:    conn,
+		SendCh:  make(chan []byte, 16),
+		UserID:  userID, // <-- Set it
+		IsGuest: isGuest,
 	}
 	return c
 }
@@ -81,13 +84,27 @@ func (c *Connection) ReadPump(ctx context.Context) {
 func (c *Connection) WritePump(ctx context.Context) {
 	defer c.conn.Close(websocket.StatusNormalClosure, "writer closing")
 
-	for msg := range c.SendCh {
-		writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err := c.conn.Write(writeCtx, websocket.MessageText, msg)
-		cancel()
-		if err != nil {
-			log.Println("write error:", err)
-			break
+	// for msg := range c.SendCh {
+	// 	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// 	err := c.conn.Write(writeCtx, websocket.MessageText, msg)
+	// 	cancel()
+	// 	if err != nil {
+	// 		log.Println("write error:", err)
+	// 		break
+	// 	}
+	// }
+	for {
+		select {
+		case msg := <-c.SendCh:
+			// If you need a specific deadline per write:
+			// c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			err := c.conn.Write(ctx, websocket.MessageText, msg)
+			if err != nil {
+				log.Println("write error:", err)
+				return // Use return instead of break
+			}
+		case <-ctx.Done(): // Check for context cancellation
+			return
 		}
 	}
 }
