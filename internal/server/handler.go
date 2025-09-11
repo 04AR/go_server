@@ -20,7 +20,7 @@ func ServeWS(rm *db.RedisManager, w http.ResponseWriter, r *http.Request, db *sq
 	}
 
 	// Validate JWT (now returns userID + isGuest flag)
-	userID, isGuest, err := auth.ValidateJWT(tokenStr, db)
+	userID, isGuest, err := auth.ValidateJWT(tokenStr, db, rm.Client)
 	if err != nil {
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
@@ -40,7 +40,7 @@ func ServeWS(rm *db.RedisManager, w http.ResponseWriter, r *http.Request, db *sq
 		return
 	}
 
-	conn := NewConnection(rm, c)
+	conn := NewConnection(rm, c, userID, isGuest)
 
 	// Start writer goroutine
 	go conn.WritePump(r.Context())
