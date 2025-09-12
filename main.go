@@ -15,7 +15,6 @@ import (
 	"go-server/internal/server"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
 )
 
@@ -24,25 +23,13 @@ func main() {
 	// InitProfiler(ProfilerAddr) // 2 goroutines
 
 	// --- Database Setup ---
-	// Init SQLite
-	log.Println("Initializing SQLite database...") // 1 goroutine
-	db, err := sqlx.Open("sqlite", SQLDBPath)
+	// Initialize database and AuthProvider
+	log.Println("Initialize database and AuthProvider...")
+	db, authProvider, err := DB.InitDB()
 	if err != nil {
-		log.Fatal("Failed to open SQLite database:", err)
+		log.Fatal(err)
 	}
 	defer db.Close()
-	DB.InitSqlite(db)
-	DB.TestDataSqlite(db)
-
-	// Init Postgres
-	// log.Println("Initializing Postgress database...")
-	// db, err := sql.Open("pgx", PostgresDSN)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// defer db.Close()
-	// DB.InitPG(db)
-	// DB.TestDataPG(db)
 
 	// Init Redis
 	log.Println("Connecting to Redis...")
@@ -56,13 +43,13 @@ func main() {
 	fmt.Println("Starting server...")
 	// --- HTTP and Websocket Server Setup ---
 	// Auth routes
-	http.HandleFunc("/register", auth.RegisterHandler(db))
-	http.HandleFunc("/login", auth.LoginHandler(db))
+	http.HandleFunc("/register", auth.RegisterHandler(authProvider))
+	http.HandleFunc("/login", auth.LoginHandler(authProvider))
 	http.HandleFunc("/guest", auth.GuestHandler(rm.Client))
 	// WebSocket route
 	log.Println("WSServer listening on", WSAddr)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		server.ServeWS(rm, w, r, db)
+		server.ServeWS(rm, w, r, authProvider)
 	})
 
 	// Start server
