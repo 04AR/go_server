@@ -4,17 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jmoiron/sqlx"
 	"github.com/redis/go-redis/v9"
-	"golang.org/x/crypto/bcrypt"
 )
 
 var jwtSecret []byte
@@ -38,7 +34,7 @@ type loginReq struct {
 	Password string `json:"password"`
 }
 
-func RegisterHandler(db *sqlx.DB) http.HandlerFunc {
+func RegisterHandler(authProvider AuthProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -51,42 +47,27 @@ func RegisterHandler(db *sqlx.DB) http.HandlerFunc {
 			return
 		}
 
-		// Validate input
-		req.Username = strings.TrimSpace(req.Username)
-		req.Password = strings.TrimSpace(req.Password)
-		if req.Username == "" || req.Password == "" {
-			http.Error(w, "Username and password are required", http.StatusBadRequest)
-			return
-		}
-		if len(req.Username) < 3 || len(req.Password) < 6 {
-			http.Error(w, "Username must be at least 3 characters and password at least 6 characters", http.StatusBadRequest)
-			return
-		}
-
-		// Hash password
-		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		user, err := authProvider.Register(r.Context(), req.Username, req.Password)
 		if err != nil {
-			http.Error(w, "Internal error", http.StatusInternalServerError)
-			return
-		}
-
-		// Insert user
-		_, err = db.Exec("INSERT INTO users (username, password_hash) VALUES (?, ?)", req.Username, hash)
-		if err != nil {
-			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-				http.Error(w, "Username already taken", http.StatusConflict)
-				return
+			if err.Error() == "username already taken" {
+				http.Error(w, err.Error(), http.StatusConflict)
+			} else if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "at least") {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			} else {
+				http.Error(w, "Internal error", http.StatusInternalServerError)
 			}
-			http.Error(w, "Internal error", http.StatusInternalServerError)
 			return
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"message": "User created successfully"})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "User created successfully",
+			"user":    user,
+		})
 	}
 }
 
-func LoginHandler(db *sqlx.DB) http.HandlerFunc {
+func LoginHandler(authProvider AuthProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -99,27 +80,23 @@ func LoginHandler(db *sqlx.DB) http.HandlerFunc {
 			return
 		}
 
-		var id int
-		var hash string
-		err := db.QueryRow("SELECT id, password_hash FROM users WHERE username = ?", req.Username).Scan(&id, &hash)
+		user, err := authProvider.Login(r.Context(), req.Username, req.Password)
 		if err != nil {
-			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
-			return
-		}
-
-		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
 			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 			return
 		}
 
 		claims := jwt.MapClaims{
-			"user_id": id,
-			"exp":     time.Now().Add(24 * time.Hour).Unix(),
+			"user": map[string]interface{}{
+				"id":       user.ID,
+				"username": user.Username,
+				"is_guest": user.IsGuest,
+			},
+			"exp": time.Now().Add(24 * time.Hour).Unix(),
 		}
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 		signed, err := token.SignedString(jwtSecret)
 		if err != nil {
-			log.Printf("ERROR: failed to sign JWT for user %d: %v", id, err)
 			http.Error(w, "Internal error", http.StatusInternalServerError)
 			return
 		}
@@ -135,8 +112,7 @@ func GuestHandler(redisClient *redis.Client) http.HandlerFunc {
 			return
 		}
 
-		// Generate unique guest ID (negative to avoid collision with SQLite IDs)
-		ctx := context.Background()
+		ctx := r.Context()
 		guestID, err := redisClient.Incr(ctx, "guest_id_counter").Result()
 		if err != nil {
 			http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -144,9 +120,9 @@ func GuestHandler(redisClient *redis.Client) http.HandlerFunc {
 		}
 		guestID = -guestID // Negative IDs for guests
 
-		// Store guest metadata in Redis (expires after 1 hour)
-		guestKey := "guest:" + strconv.FormatInt(guestID, 10)
+		guestKey := fmt.Sprintf("guest:%d", guestID)
 		err = redisClient.HSet(ctx, guestKey, map[string]interface{}{
+			"username":   fmt.Sprintf("Guest_%d", -guestID),
 			"created_at": time.Now().Unix(),
 		}).Err()
 		if err != nil {
@@ -155,11 +131,19 @@ func GuestHandler(redisClient *redis.Client) http.HandlerFunc {
 		}
 		redisClient.Expire(ctx, guestKey, 1*time.Hour)
 
-		// Generate short-lived JWT (1 hour)
+		user := User{
+			ID:       int(guestID),
+			Username: fmt.Sprintf("Guest_%d", -guestID),
+			IsGuest:  true,
+		}
+
 		claims := jwt.MapClaims{
-			"user_id":  guestID,
-			"is_guest": true,
-			"exp":      time.Now().Add(1 * time.Hour).Unix(),
+			"user": map[string]interface{}{
+				"id":       user.ID,
+				"username": user.Username,
+				"is_guest": user.IsGuest,
+			},
+			"exp": time.Now().Add(1 * time.Hour).Unix(),
 		}
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 		signed, err := token.SignedString(jwtSecret)
@@ -171,48 +155,59 @@ func GuestHandler(redisClient *redis.Client) http.HandlerFunc {
 		json.NewEncoder(w).Encode(map[string]string{"token": signed})
 	}
 }
-func ValidateJWT(tokenStr string, db *sqlx.DB, redisClient *redis.Client) (int, bool, error) {
+
+func ValidateJWT(tokenStr string, authProvider AuthProvider, redisClient *redis.Client) (User, error) {
 	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-		// Ensure signing method is HMAC
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
 		return jwtSecret, nil
 	})
 	if err != nil || !token.Valid {
-		return 0, false, err
+		return User{}, fmt.Errorf("invalid token: %v", err)
 	}
-
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return 0, false, fmt.Errorf("invalid token claims")
+		return User{}, jwt.ErrInvalidKey
 	}
 
-	// user_id must always exist
-	userIDFloat, ok := claims["user_id"].(float64)
+	userClaims, ok := claims["user"].(map[string]interface{})
 	if !ok {
-		return 0, false, fmt.Errorf("invalid user_id in token")
+		return User{}, fmt.Errorf("invalid user claims")
 	}
-	userID := int(userIDFloat)
+	userID, ok := userClaims["id"].(float64)
+	if !ok {
+		return User{}, fmt.Errorf("invalid user ID")
+	}
+	username, _ := userClaims["username"].(string) // Optional, may be empty
+	isGuest, _ := userClaims["is_guest"].(bool)
 
-	// is_guest is optional
-	isGuest, _ := claims["is_guest"].(bool)
+	user := User{
+		ID:       int(userID),
+		Username: username,
+		IsGuest:  isGuest,
+	}
 
 	if isGuest {
-		// Check guest in Redis
-		guestKey := "guest:" + strconv.FormatInt(int64(userID), 10)
+		guestKey := fmt.Sprintf("guest:%d", user.ID)
 		exists, err := redisClient.Exists(context.Background(), guestKey).Result()
 		if err != nil || exists == 0 {
-			return 0, true, fmt.Errorf("guest user not found")
+			return User{}, fmt.Errorf("guest user not found")
+		}
+		// Update username from Redis if not in JWT
+		if user.Username == "" {
+			user.Username, _ = redisClient.HGet(context.Background(), guestKey, "username").Result()
 		}
 	} else {
-		// Check registered user in SQLite
-		var exists bool
-		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE id = ?)", userID).Scan(&exists)
+		exists, err := authProvider.ValidateUser(context.Background(), user.ID)
 		if err != nil || !exists {
-			return 0, false, fmt.Errorf("registered user not found")
+			return User{}, fmt.Errorf("registered user not found")
+		}
+		// Update username from AuthProvider if not in JWT
+		if user.Username == "" {
+			updatedUser, err := authProvider.GetUser(context.Background(), user.ID)
+			if err != nil {
+				return User{}, fmt.Errorf("failed to get user: %v", err)
+			}
+			user.Username = updatedUser.Username
 		}
 	}
-
-	return userID, isGuest, nil
+	return user, nil
 }
