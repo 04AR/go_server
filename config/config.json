@@ -1,0 +1,9 @@
+{
+  "table_name": "accounts",
+  "id_column": "account_id",
+  "username_column": "login",
+  "password_column": "pass",
+  "create_table_sql": "CREATE TABLE IF NOT EXISTS accounts (account_id INTEGER PRIMARY KEY AUTOINCREMENT, login TEXT UNIQUE NOT NULL, pass TEXT NOT NULL, email TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, role VARCHAR(50) DEFAULT 'user')",
+  "dialect": "sqlite",
+  "connection_string": "account.db"
+}
