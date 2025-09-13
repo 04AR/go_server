@@ -1,6 +1,6 @@
 just learning to use Go by building the websocket server
 
-# Go WebSocket Server with Redis + SQL Backend
+# Go WebSocket Server with Redis + sqlite and postgres Backend
 
 🚀 A lightweight and scalable **WebSocket server written in Go** that supports **real-time synchronization** between clients.  
 It uses:
