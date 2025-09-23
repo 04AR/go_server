@@ -71,7 +71,22 @@ func (c *Connection) ReadPump(ctx context.Context) {
 			c.sendResponse(packet.ID, map[string]string{"message": "pong"})
 		default:
 			// Try to call Lua script
-			res, err := c.rm.CallScript(ctx, packet.Action, nil, packet.Args...)
+			// Ensure client provided at least one argument (the hash key)
+			if len(packet.Args) < 1 {
+				c.sendError(packet.ID, "invalid_args", "missing hash key")
+				continue
+			}
+			// First argument is the hash name (KEYS[1])
+			hashKey, ok := packet.Args[0].(string)
+			if !ok || hashKey == "" {
+				c.sendError(packet.ID, "invalid_args", "hash key must be a non-empty string")
+				continue
+			}
+			// The rest of the args go to ARGV
+			argv := packet.Args[1:]
+
+			// Call Lua script dynamically
+			res, err := c.rm.CallScript(ctx, packet.Action, []string{hashKey}, argv...)
 			if err != nil {
 				c.sendError(packet.ID, "script_error", err.Error())
 			} else {
