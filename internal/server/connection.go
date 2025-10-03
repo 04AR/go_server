@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 
+	"go-server/internal/auth"
 	"go-server/internal/db"
 
 	"github.com/coder/websocket"
@@ -20,28 +21,30 @@ type ClientMessage struct {
 }
 
 type ServerResponse struct {
-	ID     string      `json:"id"`
-	Type   string      `json:"type"` // "response"
-	Status string      `json:"status"`
+	ID     string      `json:"Id"`
+	Type   string      `json:"Type"` // "response"
+	Status string      `json:"Status"`
 	Result interface{} `json:"result,omitempty"`
 	Error  string      `json:"error,omitempty"`
 }
 
 type Connection struct {
-	rm      *db.RedisManager
-	conn    *websocket.Conn
-	SendCh  chan []byte
-	UserID  int  // <-- Add this
-	IsGuest bool // <-- Add this
+	rm     *db.RedisManager
+	conn   *websocket.Conn
+	SendCh chan []byte
+	user   auth.User
+	// UserID  int  // <-- Add this
+	// IsGuest bool // <-- Add this
 }
 
-func NewConnection(rm *db.RedisManager, conn *websocket.Conn, userID int, isGuest bool) *Connection {
+func NewConnection(rm *db.RedisManager, conn *websocket.Conn, user auth.User) *Connection {
 	c := &Connection{
-		rm:      rm,
-		conn:    conn,
-		SendCh:  make(chan []byte, 16),
-		UserID:  userID, // <-- Set it
-		IsGuest: isGuest,
+		rm:     rm,
+		conn:   conn,
+		SendCh: make(chan []byte, 16),
+		user:   user,
+		// UserID:  userID, // <-- Set it
+		// IsGuest: isGuest,
 	}
 	return c
 }
@@ -99,15 +102,6 @@ func (c *Connection) ReadPump(ctx context.Context) {
 func (c *Connection) WritePump(ctx context.Context) {
 	defer c.conn.Close(websocket.StatusNormalClosure, "writer closing")
 
-	// for msg := range c.SendCh {
-	// 	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	// 	err := c.conn.Write(writeCtx, websocket.MessageText, msg)
-	// 	cancel()
-	// 	if err != nil {
-	// 		log.Println("write error:", err)
-	// 		break
-	// 	}
-	// }
 	for {
 		select {
 		case msg := <-c.SendCh:
@@ -131,7 +125,12 @@ func (c *Connection) sendResponse(id string, result interface{}) {
 		Status: "ok",
 		Result: result,
 	}
-	data, _ := json.Marshal(resp)
+	data, err := json.Marshal(resp)
+	log.Println("Sending response:", string(data))
+	if err != nil {
+		log.Println("json marshal error:", err)
+		return
+	}
 	c.SendCh <- data
 }
 
