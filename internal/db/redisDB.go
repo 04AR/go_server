@@ -38,6 +38,16 @@ func InitRedis(addr string, password string, scriptDir string) (*RedisManager, e
 
 	ctx := context.Background()
 
+	// check for script directory if not creates one
+	if _, err := os.Stat(scriptDir); os.IsNotExist(err) {
+		// Create directory
+		err := os.MkdirAll(scriptDir, 0755) // MkdirAll creates parent dirs too
+		if err != nil {
+			return nil, fmt.Errorf("error creating directory: %w", err)
+		}
+		fmt.Println("Directory created:", scriptDir)
+	}
+
 	// load existing scripts
 	if err := db.loadScriptsFromDir(ctx, scriptDir); err != nil {
 		return nil, err
@@ -157,6 +167,27 @@ func (db *RedisManager) CallScript(ctx context.Context, action string, keys []st
 		return map[string]interface{}{"result": val}, nil
 	}
 }
+
+//
+// Pub/Sub for events
+//
+
+// func (db *RedisManager) SubscribeEvents(ctx context.Context, hub *Hub) {
+// 	pubsub := db.Client.Subscribe(ctx, "events")
+// 	ch := pubsub.Channel()
+
+// 	go func() {
+// 		for {
+// 			select {
+// 			case msg := <-ch:
+// 				// Forward Redis "events" to hub broadcast
+// 				hub.broadcast <- []byte(msg.Payload)
+// 			case <-ctx.Done():
+// 				return
+// 			}
+// 		}
+// 	}()
+// }
 
 func (db *RedisManager) Shutdown(ctx context.Context, wipeData bool) {
 	log.Println("Shutting down Redis...")
