@@ -8,10 +8,9 @@ import (
 	"go-server/internal/db"
 
 	"github.com/coder/websocket"
-	"github.com/jmoiron/sqlx"
 )
 
-func ServeWS(rm *db.RedisManager, w http.ResponseWriter, r *http.Request, db *sqlx.DB) {
+func ServeWS(rm *db.RedisManager, w http.ResponseWriter, r *http.Request, authProvider auth.AuthProvider) {
 	// Simple token auth (in real app, use JWT or session)
 	tokenStr := r.URL.Query().Get("token")
 	if tokenStr == "" {
@@ -20,17 +19,13 @@ func ServeWS(rm *db.RedisManager, w http.ResponseWriter, r *http.Request, db *sq
 	}
 
 	// Validate JWT (now returns userID + isGuest flag)
-	userID, isGuest, err := auth.ValidateJWT(tokenStr, db, rm.Client)
+	user, err := auth.ValidateJWT(tokenStr, authProvider, rm.Client)
 	if err != nil {
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
 	}
 
-	if isGuest {
-		log.Printf("Guest user %d connected via WebSocket", userID)
-	} else {
-		log.Printf("Registered user %d connected via WebSocket", userID)
-	}
+	log.Printf("WebSocket: Validated userID=%d, username=%s, isGuest=%v", user.ID, user.Username, user.IsGuest)
 
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
@@ -40,7 +35,7 @@ func ServeWS(rm *db.RedisManager, w http.ResponseWriter, r *http.Request, db *sq
 		return
 	}
 
-	conn := NewConnection(rm, c, userID, isGuest)
+	conn := NewConnection(rm, c, user)
 
 	// Start writer goroutine
 	go conn.WritePump(r.Context())
