@@ -33,6 +33,7 @@ type Connection struct {
 	conn   *websocket.Conn
 	SendCh chan []byte
 	user   auth.User
+	rooms  map[string]bool // new: rooms this connection is subscribed to
 	// UserID  int  // <-- Add this
 	// IsGuest bool // <-- Add this
 }
@@ -43,6 +44,7 @@ func NewConnection(rm *db.RedisManager, conn *websocket.Conn, user auth.User) *C
 		conn:   conn,
 		SendCh: make(chan []byte, 16),
 		user:   user,
+		rooms:  make(map[string]bool), // new: rooms this connection is subscribed to
 		// UserID:  userID, // <-- Set it
 		// IsGuest: isGuest,
 	}
