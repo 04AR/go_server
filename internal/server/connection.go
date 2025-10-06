@@ -74,6 +74,8 @@ func (c *Connection) ReadPump(ctx context.Context) {
 		switch packet.Action {
 		case "ping":
 			c.sendResponse(packet.ID, map[string]string{"message": "pong"})
+		case "subscribe":
+			c.sendResponse(packet.ID, map[string]string{"message": "subscribed"})
 		default:
 			// Try to call Lua script
 			// Ensure client provided at least one argument (the hash key)
