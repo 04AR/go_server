@@ -10,6 +10,7 @@ import (
 	"go-server/internal/db"
 
 	"github.com/coder/websocket"
+	"github.com/redis/go-redis/v9"
 )
 
 // Message represents a WebSocket message with type, sender ID, channel, and content.
@@ -29,26 +30,74 @@ type ServerResponse struct {
 }
 
 type Connection struct {
-	rm     *db.RedisManager
-	conn   *websocket.Conn
-	SendCh chan []byte
-	user   auth.User
-	rooms  map[string]bool // new: rooms this connection is subscribed to
+	rm        *db.RedisManager
+	conn      *websocket.Conn
+	SendCh    chan []byte
+	user      auth.User
+	subClient *redis.Client
+	pubsub    *redis.PubSub
+	// rooms     map[string]bool // new: rooms this connection is subscribed to
 	// UserID  int  // <-- Add this
 	// IsGuest bool // <-- Add this
 }
 
 func NewConnection(rm *db.RedisManager, conn *websocket.Conn, user auth.User) *Connection {
+	subClient := redis.NewClient(&redis.Options{
+		Addr:     rm.Client.Options().Addr,
+		Password: rm.Client.Options().Password,
+		DB:       0, // use default DB
+	})
 	c := &Connection{
-		rm:     rm,
-		conn:   conn,
-		SendCh: make(chan []byte, 16),
-		user:   user,
-		rooms:  make(map[string]bool), // new: rooms this connection is subscribed to
+		rm:        rm,
+		conn:      conn,
+		SendCh:    make(chan []byte, 16),
+		user:      user,
+		subClient: subClient,
+		// rooms:     make(map[string]bool), // new: rooms this connection is subscribed to
 		// UserID:  userID, // <-- Set it
 		// IsGuest: isGuest,
 	}
 	return c
+}
+
+func (c *Connection) handleSubscribe(ctx context.Context, roomID string) {
+	if c.pubsub == nil {
+		c.pubsub = c.subClient.Subscribe(ctx, roomID)
+		go c.listenPubSub(ctx)
+	} else {
+		err := c.pubsub.Subscribe(ctx, roomID)
+		if err != nil {
+			c.sendError("", "subscribe", err.Error())
+			return
+		}
+	}
+	c.sendResponse("", map[string]string{"subscribed": roomID})
+}
+
+func (c *Connection) handleUnsubscribe(ctx context.Context, roomID string) {
+	if c.pubsub != nil {
+		err := c.pubsub.Unsubscribe(ctx, roomID)
+		if err != nil {
+			c.sendError("", "unsubscribe", err.Error())
+			return
+		}
+		c.sendResponse("", map[string]string{"unsubscribed": roomID})
+	}
+}
+
+func (c *Connection) listenPubSub(ctx context.Context) {
+	ch := c.pubsub.Channel()
+	for {
+		select {
+		case msg := <-ch:
+			if msg == nil {
+				return
+			}
+			c.SendCh <- []byte(msg.Payload)
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (c *Connection) ReadPump(ctx context.Context) {
@@ -75,7 +124,19 @@ func (c *Connection) ReadPump(ctx context.Context) {
 		case "ping":
 			c.sendResponse(packet.ID, map[string]string{"message": "pong"})
 		case "subscribe":
-			c.sendResponse(packet.ID, map[string]string{"message": "subscribed"})
+			if len(packet.Args) < 1 {
+				c.sendError(packet.ID, "missing_args", "room id required")
+				break
+			}
+			roomID, _ := packet.Args[0].(string)
+			c.handleSubscribe(ctx, roomID)
+		case "unsubscribe":
+			if len(packet.Args) < 1 {
+				c.sendError(packet.ID, "missing_args", "room id required")
+				break
+			}
+			roomID, _ := packet.Args[0].(string)
+			c.handleUnsubscribe(ctx, roomID)
 		default:
 			// Try to call Lua script
 			// Ensure client provided at least one argument (the hash key)
