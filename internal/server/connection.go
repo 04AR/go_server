@@ -11,6 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/redis/go-redis/v9"
+	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
 // Message represents a WebSocket message with type, sender ID, channel, and content.
@@ -36,7 +37,6 @@ type Connection struct {
 	user      auth.User
 	subClient *redis.Client
 	pubsub    *redis.PubSub
-	// rooms     map[string]bool // new: rooms this connection is subscribed to
 	// UserID  int  // <-- Add this
 	// IsGuest bool // <-- Add this
 }
@@ -53,7 +53,6 @@ func NewConnection(rm *db.RedisManager, conn *websocket.Conn, user auth.User) *C
 		SendCh:    make(chan []byte, 16),
 		user:      user,
 		subClient: subClient,
-		// rooms:     make(map[string]bool), // new: rooms this connection is subscribed to
 		// UserID:  userID, // <-- Set it
 		// IsGuest: isGuest,
 	}
@@ -137,6 +136,21 @@ func (c *Connection) ReadPump(ctx context.Context) {
 			}
 			roomID, _ := packet.Args[0].(string)
 			c.handleUnsubscribe(ctx, roomID)
+		case "create_lobby":
+			// Special case for lobby id creation: just return some info
+			id, err := gonanoid.New(5)
+			if err != nil {
+				c.sendError(packet.ID, "internal_error", "failed to generate lobby")
+				break
+			}
+			// Call script
+			_, err = c.rm.CallScript(ctx, "create_lobby", []string{id}, id, c.user.Username, 10, "{}")
+			if err != nil {
+				log.Println("create_lobby script error:", err)
+				c.sendError(packet.ID, "internal_error", "failed to call create_lobby script")
+				break
+			}
+			c.sendResponse(packet.ID, map[string]string{"lobby_id": id})
 		default:
 			// Try to call Lua script
 			// Ensure client provided at least one argument (the hash key)
