@@ -10,8 +10,8 @@ import (
 	"go-server/internal/db"
 
 	"github.com/coder/websocket"
-	"github.com/redis/go-redis/v9"
 	gonanoid "github.com/matoous/go-nanoid/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 // Message represents a WebSocket message with type, sender ID, channel, and content.
@@ -19,6 +19,7 @@ type ClientMessage struct {
 	ID     string        `json:"id"`
 	Type   string        `json:"type"`
 	Action string        `json:"action"`
+	Keys   []string      `json:"keys"` // Add this
 	Args   []interface{} `json:"args"`
 }
 
@@ -138,42 +139,73 @@ func (c *Connection) ReadPump(ctx context.Context) {
 			c.handleUnsubscribe(ctx, roomID)
 		case "create_lobby":
 			// Special case for lobby id creation: just return some info
-			id, err := gonanoid.New(5)
+			lobby_id, err := gonanoid.New(5)
 			if err != nil {
 				c.sendError(packet.ID, "internal_error", "failed to generate lobby")
 				break
 			}
-			// Call script
-			_, err = c.rm.CallScript(ctx, "create_lobby", []string{id}, id, c.user.Username, 10, "{}")
+			// Call script to create lobby in Redis
+			// KEYS:
+			// KEYS[1] = "lobby:<lobbyId>"
+
+			// ARGV:
+			// ARGV[1] = lobbyId
+			// ARGV[2] = maxPlayers
+			_, err = c.rm.CallScript(ctx, "create_lobby", []string{"lobby:" + lobby_id}, lobby_id)
 			if err != nil {
 				log.Println("create_lobby script error:", err)
 				c.sendError(packet.ID, "internal_error", "failed to call create_lobby script")
 				break
 			}
-			c.sendResponse(packet.ID, map[string]string{"lobby_id": id})
-		default:
-			// Try to call Lua script
-			// Ensure client provided at least one argument (the hash key)
+			c.sendResponse(packet.ID, map[string]string{"lobby_id": lobby_id})
+		case "join_lobby":
 			if len(packet.Args) < 1 {
-				c.sendError(packet.ID, "invalid_args", "missing hash key")
-				continue
+				c.sendError(packet.ID, "missing_args", "lobby id required")
+				break
 			}
-			// First argument is the hash name (KEYS[1])
-			hashKey, ok := packet.Args[0].(string)
-			if !ok || hashKey == "" {
-				c.sendError(packet.ID, "invalid_args", "hash key must be a non-empty string")
-				continue
-			}
-			// The rest of the args go to ARGV
-			argv := packet.Args[1:]
+			lobby_id, _ := packet.Args[0].(string)
+			player_id := c.user.Username
 
-			// Call Lua script dynamically
-			res, err := c.rm.CallScript(ctx, packet.Action, []string{hashKey}, argv...)
+			keys := []string{
+				"lobby:" + lobby_id,
+				"lobby:" + lobby_id + ":players",
+			}
+			playerStateJson := packet.Args[1]
+
+			_, err = c.rm.CallScript(ctx, "join_lobby", keys, lobby_id, player_id, playerStateJson)
+			if err != nil {
+				log.Println("join_lobby script error:", err)
+				c.sendError(packet.ID, "internal_error", "failed to call join_lobby script")
+				break
+			}
+
+			c.handleSubscribe(ctx, "lobby:"+lobby_id+":events")
+
+			c.sendResponse(packet.ID, map[string]string{
+				"lobby_id":  lobby_id,
+				"joined_as": player_id,
+			})
+		default:
+			// Allow multi-key Lua script calls
+			if len(packet.Keys) < 1 {
+				c.sendError(packet.ID, "invalid_keys", "missing Redis keys")
+				continue
+			}
+			// Optional: Validate keys are non-empty strings
+			for _, k := range packet.Keys {
+				if k == "" {
+					c.sendError(packet.ID, "invalid_keys", "all keys must be non-empty strings")
+					continue
+				}
+			}
+			// Call Lua script dynamically with any number of keys
+			res, err := c.rm.CallScript(ctx, packet.Action, packet.Keys, packet.Args...)
 			if err != nil {
 				c.sendError(packet.ID, "script_error", err.Error())
 			} else {
 				c.sendResponse(packet.ID, res)
 			}
+
 		}
 	}
 }
