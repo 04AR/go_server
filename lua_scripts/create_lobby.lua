@@ -1,69 +1,40 @@
 -- create_lobby.lua
--- Arguments:
---   ARGV[1] = lobby name (string, required)
---   ARGV[2] = userId (string, required)
+-- KEYS:
+--   KEYS[1] = "lobby:<lobbyId>"
+
+-- ARGV:
+--   ARGV[1] = lobbyId
+--   ARGV[2] = ownerId
+--   ARGV[3] = maxPlayers
+--   ARGV[4] = metaJson (optional, can be "{}" for empty)
 
 -- Configurable constants
-local MAX_LOBBY_NAME_LEN = 32
-local MIN_LOBBY_NAME_LEN = 3
-local MAX_MEMBERS = 50
+local events_channel = "lobby:" .. ARGV[1] .. ":events"
+local chat_channel   = "lobby:" .. ARGV[1] .. ":chat"
+local created_at     = tostring(redis.call("TIME")[1])
 
--- Utility: return structured response
-local function ok(data)
-    return cjson.encode({ status = "ok", data = data })
+-- Don't overwrite lobby if exists
+if redis.call("EXISTS", KEYS[1]) == 1 then
+    return cjson.encode({status="error", err="Lobby already exists"})
 end
 
-local function err(code, msg)
-    return cjson.encode({ status = "error", error = code, message = msg })
-end
-
--- Validate args
-if not ARGV[1] or ARGV[1] == "" then
-    return err("invalid_name", "Lobby name is required")
-end
-if not ARGV[2] or ARGV[2] == "" then
-    return err("invalid_user", "User ID is required")
-end
-
-local lobbyName = ARGV[1]
-local userId    = ARGV[2]
-
-if string.len(lobbyName) < MIN_LOBBY_NAME_LEN then
-    return err("name_too_short", "Lobby name must be at least " .. MIN_LOBBY_NAME_LEN .. " characters")
-end
-if string.len(lobbyName) > MAX_LOBBY_NAME_LEN then
-    return err("name_too_long", "Lobby name must be at most " .. MAX_LOBBY_NAME_LEN .. " characters")
-end
-
-local lobbyKey = "lobby:" .. lobbyName
-local membersKey = lobbyKey .. ":members"
-local ownerKey = lobbyKey .. ":owner"
-
--- Check if lobby already exists
-if redis.call("EXISTS", lobbyKey) == 1 then
-    return err("lobby_exists", "Lobby '" .. lobbyName .. "' already exists")
-end
-
--- Create lobby hash (metadata)
-redis.call("HSET", lobbyKey,
-    "name", lobbyName,
-    "created_at", tostring(redis.call("TIME")[1]),
-    "owner", userId,
-    "max_members", MAX_MEMBERS
+-- Store hash with all key info
+redis.call("HMSET", KEYS[1],
+    "id", ARGV[1],
+    "events_channel", events_channel,
+    "chat_channel", chat_channel,
+    "owner", ARGV[2],
+    "max_players", ARGV[3],
+    "created_at", created_at,
+    "meta", ARGV[4]
 )
 
--- Add owner as first member
-redis.call("SADD", membersKey, userId)
-
--- Set owner separately for quick lookup
-redis.call("SET", ownerKey, userId)
-
--- Optionally, set TTL if you want lobbies to expire after inactivity
--- redis.call("EXPIRE", lobbyKey, 3600)
-
-return ok({
-    lobby = lobbyName,
-    owner = userId,
-    members = 1,
-    max_members = MAX_MEMBERS
+return cjson.encode({
+    status = "ok",
+    id = ARGV[1],
+    events_channel = events_channel,
+    chat_channel = chat_channel,
+    owner = ARGV[2],
+    max_players = ARGV[3],
+    created_at = created_at
 })
