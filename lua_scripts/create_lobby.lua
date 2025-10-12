@@ -1,4 +1,3 @@
--- Lua-generated lobby id create script
 -- KEYS:
 --   KEYS[1] = "lobby:<lobbyId>"
 
