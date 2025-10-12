@@ -4,14 +4,16 @@
 
 -- ARGV:
 --   ARGV[1] = lobbyId
---   ARGV[2] = ownerId
---   ARGV[3] = maxPlayers
---   ARGV[4] = metaJson (optional, can be "{}" for empty)
+--   ARGV[2] = maxPlayers
+
+-- Default maxPlayers to 10 if not provided or not a valid number
+local maxPlayers = tonumber(ARGV[2])
+if maxPlayers == nil or maxPlayers < 1 then
+    maxPlayers = 10
+end
 
 -- Configurable constants
-local events_channel = "lobby:" .. ARGV[1] .. ":events"
-local chat_channel   = "lobby:" .. ARGV[1] .. ":chat"
-local created_at     = tostring(redis.call("TIME")[1])
+local created_at = tostring(redis.call("TIME")[1])
 
 -- Don't overwrite lobby if exists
 if redis.call("EXISTS", KEYS[1]) == 1 then
@@ -21,20 +23,14 @@ end
 -- Store hash with all key info
 redis.call("HMSET", KEYS[1],
     "id", ARGV[1],
-    "events_channel", events_channel,
-    "chat_channel", chat_channel,
-    "owner", ARGV[2],
-    "max_players", ARGV[3],
-    "created_at", created_at,
-    "meta", ARGV[4]
+    "max_players", maxPlayers,
+    "created_at", created_at
 )
 
 return cjson.encode({
     status = "ok",
     id = ARGV[1],
-    events_channel = events_channel,
-    chat_channel = chat_channel,
-    owner = ARGV[2],
+    -- owner = ARGV[2],
     max_players = ARGV[3],
     created_at = created_at
 })
