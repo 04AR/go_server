@@ -16,11 +16,11 @@ import (
 
 // Message represents a WebSocket message with type, sender ID, channel, and content.
 type ClientMessage struct {
-	ID     string        `json:"id"`
-	Type   string        `json:"type"`
-	Action string        `json:"action"`
-	Keys   []string      `json:"keys"` // Add this
-	Args   []interface{} `json:"args"`
+	ID     string        `json:"Id"`
+	Type   string        `json:"Yype"`
+	Action string        `json:"Action"`
+	Keys   []string      `json:"Keys"` // Add this
+	Args   []interface{} `json:"Args"`
 }
 
 type ServerResponse struct {
@@ -147,11 +147,7 @@ func (c *Connection) ReadPump(ctx context.Context) {
 			// Call script to create lobby in Redis
 			// KEYS:
 			// KEYS[1] = "lobby:<lobbyId>"
-
-			// ARGV:
-			// ARGV[1] = lobbyId
-			// ARGV[2] = maxPlayers
-			_, err = c.rm.CallScript(ctx, "create_lobby", []string{"lobby:" + lobby_id}, lobby_id)
+			_, err = c.rm.CallScript(ctx, "create_lobby", []string{"lobby:" + lobby_id}, packet.Args...)
 			if err != nil {
 				log.Println("create_lobby script error:", err)
 				c.sendError(packet.ID, "internal_error", "failed to call create_lobby script")
@@ -159,7 +155,7 @@ func (c *Connection) ReadPump(ctx context.Context) {
 			}
 			c.sendResponse(packet.ID, map[string]string{"lobby_id": lobby_id})
 		case "join_lobby":
-			if len(packet.Args) < 1 {
+			if len(packet.Args) < 2 {
 				c.sendError(packet.ID, "missing_args", "lobby id required")
 				break
 			}
@@ -170,9 +166,11 @@ func (c *Connection) ReadPump(ctx context.Context) {
 				"lobby:" + lobby_id,
 				"lobby:" + lobby_id + ":players",
 			}
-			playerStateJson := packet.Args[1]
 
-			_, err = c.rm.CallScript(ctx, "join_lobby", keys, lobby_id, player_id, playerStateJson)
+			allArgs := []interface{}{lobby_id, player_id}
+			allArgs = append(allArgs, packet.Args[1:]...)
+
+			res, err := c.rm.CallScript(ctx, "join_lobby", keys, allArgs...)
 			if err != nil {
 				log.Println("join_lobby script error:", err)
 				c.sendError(packet.ID, "internal_error", "failed to call join_lobby script")
@@ -181,10 +179,7 @@ func (c *Connection) ReadPump(ctx context.Context) {
 
 			c.handleSubscribe(ctx, "lobby:"+lobby_id+":events")
 
-			c.sendResponse(packet.ID, map[string]string{
-				"lobby_id":  lobby_id,
-				"joined_as": player_id,
-			})
+			c.sendResponse(packet.ID, res)
 		default:
 			// Allow multi-key Lua script calls
 			if len(packet.Keys) < 1 {
